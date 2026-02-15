@@ -1,3 +1,3 @@
-from .parse import parse
+from .parse import parse, DateRange, DateObject
 
-__all__ = [parse]
+__all__ = [parse, DateRange, DateObject]
