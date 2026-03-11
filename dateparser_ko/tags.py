@@ -1,0 +1,7 @@
+AW = "AW"
+NW = "NW"
+RW = "RW"
+SYMB = "SYMB"
+PAD = "<PAD>"
+YEAR = "YEAR"
+TERM = "TERM"

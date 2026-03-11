@@ -1,724 +1,359 @@
+from .keywords import NUMB_WORDS, ABS_WORDS, REL_WORDS
+from .stopwords import STOPWORDS
+from .symbols import ALL_SYMBOLS
+from .types import ParseResult, DateObject
+from .tags import AW, NW, PAD, SYMB, YEAR, RW, TERM
+from .patterns import RE_IS_DIGIT, RE_HAS_DIGIT_AND_CHAR
+from .abs_closures import mapping as abs_mapping
+from .misc_closures import mapping as misc_mapping
+from .rel_closures import mapping as rel_mapping
 import re
-from typing import TypedDict, List
-from datetime import datetime, timezone, date
-from dateutil.relativedelta import relativedelta
-import copy
-
-# ===== REGEX EXPRESSIONS (START)
-
-RE_IS_DIGIT = r'^-?\d+$'
-RE_IS_BLANK = r'\s+'
-RE_HAS_DIGIT = r'\d'
-
-# ===== REGEX EXPRESSIONS (END)
 
 
-# ===== KEYWORDS (START)
-
-KW_YEAR = "년"
-KW_MONTH = "월"
-KW_DAY = "일"
-KW_LAST_YEAR = "작년"
-KW_LAST_YEAR2 = "지난 해"
-KW_LAST_LAST_YEAR = "재작년"
-KW_QUARTER = "분기"
-KW_MONTHS = "개월"
-KW_YEARS = "개년"
-KW_YEARS2 = "년치"
-KW_FIRST_HALF = "상반기"
-KW_LAST_HALF = "하반기"
-KW_THIS_YEAR = "올해"
-KW_THIS_YEAR2 = "이번 연도"
-KW_THIS_MONTH = "이번 달"
-KW_LAST_MONTH = "지난 달"
-KW_LAST_QUARTER = "지난 분기"
-KW_PRESENT = "현재"
-KW_TODAY = "오늘"
-KW_TODAY2 = "금일"
-KW_TODAY3 = "당일"
-KW_THIS_MONTH2 = "금월"
-KW_THIS_MONTH3 = "당월"
-KW_LAST_MONTH2 = "전월"
-
-ABSOLUTE_WORDS = [KW_YEAR, KW_MONTH, KW_DAY]
-RELATIVE_WORDS = [KW_LAST_YEAR, KW_LAST_LAST_YEAR, KW_QUARTER, KW_MONTHS, KW_YEARS, KW_FIRST_HALF, KW_LAST_HALF,
-    KW_THIS_YEAR, KW_THIS_YEAR2, KW_THIS_MONTH, KW_LAST_YEAR2, KW_LAST_MONTH, KW_LAST_QUARTER, KW_PRESENT, KW_YEARS2,
-    KW_TODAY, KW_TODAY2, KW_TODAY3, KW_THIS_MONTH2, KW_THIS_MONTH3, KW_LAST_MONTH2]
-
-# ===== KEYWORDS (END)
-
-
-# ===== STOPWORDS (START)
-
-NUMB_WORDS = ["일", "이", "삼", "사", "오", "육", "칠", "팔", "구", "십", "백", "천"]
-DATE_WORDS = sorted(ABSOLUTE_WORDS + RELATIVE_WORDS, key=len, reverse=True)
-
-# ===== STOPWORDS (END)
-
-
-# ===== TAGS (START)
-
-DW = "DW"
-PAD = "<PAD>"
-
-# ===== TAGS (END)
-
-
-# ===== MODELS (START)
-
-
-class DateObject(TypedDict):
-    year: int
-    month: int
-    day: int
-
-
-class DateRange(TypedDict):
-    from_date: DateObject
-    to_date: DateObject
-
-
-class ParseResult(TypedDict):
-    date_ranges: List[DateRange]
-    used_tokens: List[str]
-
-
-# ===== MODELS (END)
-
-
-def parse(text: str) -> ParseResult:
-    
-    # 0. Local variables
-
-    old_string = text
-    new_string = ""
-    new_string_list: List[str] = []
-    date_objects: List[DateRange] = []
-    
-    # 1. Wrap DATE_WORDS with Tags
-
-    pattern = "|".join(map(re.escape, DATE_WORDS))
-    old_string = re.sub(
-        pattern,
-        lambda m: f"<{DW}>{m.group(0)}</{DW}>",
-        old_string
-    )
-
-    # 2. Replace irrelevant words with whitespace
-
-    ignore = False
-    for j, c in enumerate(list(old_string)):
-        if ignore:
-            if old_string[j:j + 5] == f"</{DW}>":
-                new_string += f"</{DW}>"
-                ignore = False
+def remove_stopwords(text: str) -> str:
+    cleaned = []
+    for token in text.split(" "):
+        ignore = False
+        for stopword in STOPWORDS:
+            if token.endswith(stopword):
+                cleaned.append(token[:-len(stopword)])
+                ignore = True
                 continue
 
-            new_string += c
-            continue
+        if not ignore:
+            cleaned.append(token)
 
-        if old_string[j:j + 4] == f"<{DW}>":
-            new_string += c
-            ignore = True
+    return " ".join(cleaned)
+
+
+def parse_year(text: str) -> str:
+    parsed = ""
+
+    tokens = list(text)
+    tokens_len = len(tokens)
+
+    skip_count = 0
+    for i, c in enumerate(tokens):
+        if skip_count > 0:
+            skip_count -= 1
             continue
 
         if bool(re.match(RE_IS_DIGIT, c)):
-            new_string += c
+            if i + 3 >= tokens_len:
+                pass
+
+            if (
+                    bool(re.match(RE_IS_DIGIT, tokens[i + 1]))
+                    and
+                    bool(re.match(RE_IS_DIGIT, tokens[i + 2]))
+                    and
+                    bool(re.match(RE_IS_DIGIT, tokens[i + 3]))
+                    and
+                    (i + 4 == tokens_len or not bool(re.match(RE_IS_DIGIT, tokens[i + 4])))
+            ):
+                parsed += f"<{YEAR}>{c + tokens[i + 1] + tokens[i + 2] + tokens[i + 3]}</{YEAR}>"
+                skip_count += 3
+                continue
+
+        parsed += c
+
+    return parsed
+
+
+def wrap_terms(text: str) -> str:
+    parsed = ""
+
+    tokens = list(text)
+    skip_count = 0
+    for i, c in enumerate(tokens):
+        if skip_count > 0:
+            skip_count -= 1
+            continue
+
+        chars = []
+        for keyword in REL_WORDS:
+            for j, ch in enumerate(tokens[i:]):
+                if "".join(chars).replace(" ", "") == keyword and ch == " ":
+                    break
+
+                if len(chars) > len(list(keyword)):
+                    break
+
+                chars.append(ch)
+
+            if "".join(chars).replace(" ", "") == keyword:
+                break
+            else:
+                chars.clear()
+
+        char_len = len(chars)
+        if char_len > 0:
+            parsed += f"<{TERM}>{"".join(chars)}</{TERM}>"
+            skip_count = char_len - 1
+            continue
+
+        parsed += c
+
+    return parsed
+
+
+def tag_chars(text: str) -> list:
+    tags = []
+
+    skip_count = 0
+    tokens = list(text)
+    tokens_len = len(tokens)
+
+    for i, c in enumerate(tokens):
+        if skip_count > 0:
+            skip_count -= 1
+            continue
+
+        if c == " ":
+            tags.append(PAD)
+            continue
+
+        if i + 17 < tokens_len:
+            if "".join(tokens[i:i + 6]) == f"<{YEAR}>" and "".join(tokens[i + 10:i + 17]) == f"</{YEAR}>":
+                tags.extend([YEAR for _ in range(6)])
+                tags.extend([NW for _ in range(4)])
+                tags.extend([YEAR for _ in range(7)])
+                skip_count = 16
+                continue
+
+        if i + 12 < tokens_len:
+            if "".join(tokens[i:i + 6]) == f"<{TERM}>":
+                start_pos = i + 6
+                end_pos = i + 6 + 7
+                while True:
+                    if end_pos < tokens_len:
+                        if "".join(tokens[start_pos:end_pos]) == f"</{TERM}>":
+                            tags.extend([TERM for _ in range(6)])
+                            tags.extend([RW for _ in range(start_pos - (i + 6))])
+                            tags.extend([TERM for _ in range(7)])
+                            skip_count = end_pos - i - 1
+                            break
+
+                    else:
+                        break
+
+                    start_pos += 1
+                    end_pos += 1
+
+                if skip_count > 0:
+                    continue
+
+        next_c = "" if i + 1 >= tokens_len else tokens[i + 1]
+        next_2_c = "" if i + 2 >= tokens_len else tokens[i + 2]
+        prev_t = None if i - 1 < 0 else tags[i - 1]
+        prev_2_t = None if i - 2 < 0 else tags[i - 2]
+
+        if (
+                c in ABS_WORDS
+                and
+                (prev_t == NW or prev_t == YEAR)
+        ):
+            tags.append(AW)
+
+        elif (
+                (bool(re.match(RE_IS_DIGIT, c)) or c in NUMB_WORDS)
+                and
+                (prev_t == NW or prev_t == PAD or prev_t is None or prev_t == SYMB)
+                and
+                (bool(re.match(RE_IS_DIGIT,
+                               next_c)) or next_c in NUMB_WORDS or next_c in ABS_WORDS or next_c in ALL_SYMBOLS or next_c == " "
+                 or (i + 7 < tokens_len and "".join(tokens[i + 1:i + 7]) == f"<{TERM}>"))
+                and
+                (
+                        prev_2_t is None or prev_2_t == SYMB or prev_2_t == NW or prev_2_t == AW or prev_2_t == PAD or next_2_c in ALL_SYMBOLS)
+        ):
+            tags.append(NW)
+
+        elif (
+                c in ALL_SYMBOLS
+                and
+                (prev_t == NW or prev_t == YEAR)
+                and
+                bool(re.match(RE_IS_DIGIT, next_c))
+        ):
+            tags.append(SYMB)
 
         else:
-            if c in NUMB_WORDS:
-                new_string += c
-            else:
-                new_string += PAD
+            tags.append(None)
 
-    # 3. Replace NUMB_WORDS with real numbers
+    return tags
 
-    old_string_list = []
 
-    ignore = False
-    for word in re.findall(rf"</?{DW}>|[^<>]+?(?=<|$)", new_string):
-        word = word.strip()
+def generate_tokens(tags: list, tokens: list) -> list:
+    useful_tokens = []
 
-        if word == f"</{DW}>":
-            ignore = False
+    counter = 0
+    for i, t in enumerate(tags):
+        if t is None or t == PAD:
+            counter += 1
             continue
 
-        if ignore:
-            new_string_list.append(word)
-            old_string_list.append("")
+        if t == YEAR or t == TERM:
             continue
 
-        if word == f"<{DW}>":
-            ignore = True
-            continue
+        useful_tokens.append((tokens[i], t, counter))
+        counter += 1
 
-        if bool(re.search(RE_HAS_DIGIT, word)):
-            new_string_list.append(word)
-            old_string_list.append("")
-            continue
+    return useful_tokens
 
-        if len([c for c in list(word) if c not in NUMB_WORDS]) > 0:
-            continue
 
-        real_number = ""
-        for j, c in enumerate(list(word)):
+def normalize_chars(useful_tokens: list) -> list:
+    normal_tokens = []
+
+    useful_tokens_len = len(useful_tokens)
+    for idx, token in enumerate(useful_tokens):
+        c = token[0]
+        t = token[1]
+        p = token[2]
+
+        prev_token = (None, None, None) if idx - 1 < 0 else useful_tokens[idx - 1]
+        prev_t = prev_token[1]
+
+        next_token = (None, None, None) if idx + 1 >= useful_tokens_len else useful_tokens[idx + 1]
+        next_t = next_token[1]
+
+        if t == NW and not bool(re.match(RE_IS_DIGIT, c)):
             index = NUMB_WORDS.index(c) + 1
             if index == 10:
-                if real_number == "":
-                    real_number += "10"
+                if prev_t != NW:
+                    c = "10"
+                elif next_t != NW:
+                    c = "0"
                 else:
-                    if len(word[j + 1:]) == 0:
-                        real_number += "0"
+                    c = ""
             elif index == 11:
-                if real_number == "":
-                    real_number += "100"
+                if prev_t != NW:
+                    c = "100"
+                elif next_t != NW:
+                    c = "00"
                 else:
-                    if len(word[j + 1:]) == 0:
-                        real_number += "00"
+                    c = ""
             elif index == 12:
-                if real_number == "":
-                    real_number += "1000"
+                if prev_t != NW:
+                    c = "1000"
+                elif next_t != NW:
+                    c = "000"
                 else:
-                    if len(word[j + 1:]) == 0:
-                        real_number += "000"
+                    c = ""
             else:
-                real_number += str(index)
+                c = str(index)
 
-        if real_number != "":
-            new_string_list.append(real_number)
-            old_string_list.append(word)
-            
-    # 4. Join new_string_list into DateObjects
+        normal_tokens.append((c, t, p))
 
-    from_date_object = DateObject(year=0, month=0, day=0)
-    to_date_object = DateObject(year=0, month=0, day=0)
-    date_range = DateRange(from_date=from_date_object, to_date=to_date_object)
+    return normal_tokens
 
-    def add_date_range():
-        if (
-            from_date_object["year"] != 0
-            and from_date_object["month"] != 0
-            and from_date_object["day"] != 0
-            and to_date_object["year"] != 0
-            and to_date_object["month"] != 0
-            and to_date_object["day"] != 0
-        ):
-            date_objects.append(copy.deepcopy(date_range))
-            from_date_object["year"] = 0
-            from_date_object["month"] = 0
-            from_date_object["day"] = 0
-            to_date_object["year"] = 0
-            to_date_object["month"] = 0
-            to_date_object["day"] = 0
 
-    def clean_up_date_range():
-        if (
-            from_date_object["year"] == 0
-            and from_date_object["month"] == 0
-            and from_date_object["day"] == 0
-        ):
-            return
+def parse(text: str) -> ParseResult:
+    response: ParseResult = {
+        "found_dates": [],
+        "used_tokens": [],
+        "cleaned": ""
+    }
 
-        if from_date_object["year"] == 0:
-            from_date_object["year"] = datetime.now(tz=timezone.utc).year
+    text = " ".join(text.split())
+    text = remove_stopwords(text)
 
-        if (
-            from_date_object["year"] > 0
-            and from_date_object["month"] == 0
-            and from_date_object["day"] == 0
-        ):
-            from_date_object["month"] = 1
-            from_date_object["day"] = 1
-            to_date_object["year"] = to_date_object["year"] if to_date_object["year"] > 0 else from_date_object["year"]
-            to_date_object["month"] = to_date_object["month"] if to_date_object["month"] > 0 else 12
-            to_date_object["day"] = to_date_object["day"] if to_date_object["day"] > 0 else 31
+    response["cleaned"] = text
 
-        elif (
-            from_date_object["year"] > 0
-            and from_date_object["month"] > 0
-            and from_date_object["day"] == 0
-        ):
-            from_date_object["day"] = 1
-            to_date_object["year"] = to_date_object["year"] if to_date_object["year"] > 0 else from_date_object["year"]
-            to_date_object["month"] = to_date_object["month"] if to_date_object["month"] > 0 else from_date_object["month"]
+    text = parse_year(text)
+    text = wrap_terms(text)
+    tokens = list(text)
+    tags = tag_chars(text)
+    useful_tokens = generate_tokens(tags, tokens)
 
-            temp = date(from_date_object["year"], from_date_object["month"], 1) + relativedelta(months=1) - relativedelta(days=1)
-            to_date_object["day"] = to_date_object["day"] if to_date_object["day"] > 0 else temp.day
+    response["used_tokens"] = useful_tokens
 
-        elif (
-            from_date_object["year"] > 0
-            and from_date_object["month"] > 0
-            and from_date_object["day"] > 0
-        ):
-            to_date_object["year"] = to_date_object["year"] if to_date_object["year"] > 0 else from_date_object["year"]
-            to_date_object["month"] = to_date_object["month"] if to_date_object["month"] > 0 else from_date_object["month"]
-            to_date_object["day"] = to_date_object["day"] if to_date_object["day"] > 0 else from_date_object["day"]
+    normal_tokens = normalize_chars(useful_tokens)
 
-        else:
-            return
+    dates = []
 
-        date_objects.append(date_range)
+    context = ""
+    temp_date = DateObject(y=0, m=0, d=0)
+    tokens_len = len(normal_tokens)
+    skip_counter = 0
+    for idx, token in enumerate(normal_tokens):
+        if skip_counter > 0:
+            skip_counter -= 1
+            continue
 
-    def from_absolute_words(_number: int, _word: str | None):
-        if _word == KW_YEAR:
-            if _number > 1000:
-                if from_date_object["year"] == 0:
-                    from_date_object["year"] = _number
-                elif to_date_object["year"] == 0:
-                    to_date_object["year"] = _number
+        c = token[0]
+        t = token[1]
+        p = token[2]
+
+        if t == NW:
+            context += c
+            if re.search(RE_HAS_DIGIT_AND_CHAR, context):
+                if idx + 1 < tokens_len:
+                    if normal_tokens[idx+1][1] != SYMB and normal_tokens[idx+1][1] != NW:
+                        dates.append(misc_mapping[SYMB](context))
+                        context = ""
                 else:
-                    clean_up_date_range()
-                    from_date_object["year"] = _number
+                    dates.append(misc_mapping[SYMB](context))
+                    context = ""
+
+        elif t == AW:
+            temp = abs_mapping[c](context, temp_date)
+            if (0 < temp_date["y"] != temp["y"] > 0) or (0 < temp_date["m"] != temp["m"] > 0) or (0 < temp_date["d"] != temp["d"] > 0):
+                dates.append(temp_date)
+                temp_date = temp
             else:
-                if from_date_object["year"] == 0:
-                    from_date_object["year"] = datetime.now(tz=timezone.utc).year - _number
-                elif to_date_object["year"] == 0:
-                    to_date_object["year"] = from_date_object["year"] + _number
+                temp_date["y"] = max(temp_date["y"], temp["y"])
+                temp_date["m"] = max(temp_date["m"], temp["m"])
+                temp_date["d"] = max(temp_date["d"], temp["d"])
+                if temp_date["y"] > 0 and temp_date["m"] > 0 and temp_date["d"] > 0:
+                    dates.append(temp_date)
+                    temp_date = DateObject(y=0, m=0, d=0)
+            context = ""
+
+        elif t == RW:
+            current = c
+            counter = idx + 1
+            while counter < tokens_len:
+                next_token = normal_tokens[counter]
+                if next_token[1] == RW:
+                    current += next_token[0]
                 else:
-                    clean_up_date_range()
-                    from_date_object["year"] = datetime.now(tz=timezone.utc).year - _number
+                    break
+                counter += 1
+            skip_counter = counter - idx
 
-        elif _word == KW_MONTH:
-            if from_date_object["month"] == 0:
-                from_date_object["month"] = _number
-            elif to_date_object["month"] == 0:
-                to_date_object.update({
-                    "year": to_date_object["year"] if to_date_object["year"] > 0 else from_date_object["year"],
-                    "month": _number
-                })
+            temp = rel_mapping[current.replace(" ", "")](context, temp_date)
+            if isinstance(temp, list):
+                for _temp in temp:
+                    if _temp["y"] > 0 and _temp["m"] > 0 and _temp["d"] > 0:
+                        dates.append(_temp)
+                        temp_date = DateObject(y=0, m=0, d=0)
+                    else:
+                        temp_date["y"] = max(temp_date["y"], _temp["y"])
+                        temp_date["m"] = max(temp_date["m"], _temp["m"])
+                        temp_date["d"] = max(temp_date["d"], _temp["d"])
+                        if temp_date["y"] > 0 and temp_date["m"] > 0 and temp_date["d"] > 0:
+                            dates.append(temp_date)
+                            temp_date = DateObject(y=0, m=0, d=0)
             else:
-                clean_up_date_range()
-                from_date_object["month"] = _number
-
-        elif _word == KW_DAY:
-            if from_date_object["day"] == 0:
-                from_date_object["day"] = _number
-            elif to_date_object["day"] == 0:
-                to_date_object.update({
-                    "year": to_date_object["year"] if to_date_object["year"] > 0 else from_date_object["year"],
-                    "month": to_date_object["month"] if to_date_object["month"] > 0 else from_date_object["month"],
-                    "day": _number
-                })
-            else:
-                clean_up_date_range()
-                from_date_object["day"] = _number
-
-        else:
-            if _number > 1000:
-                if from_date_object["year"] == 0:
-                    from_date_object["year"] = _number
-                elif to_date_object["year"] == 0:
-                    to_date_object["year"] = _number
+                if temp["y"] > 0 and temp["m"] > 0 and temp["d"] > 0:
+                    dates.append(temp)
+                    temp_date = DateObject(y=0, m=0, d=0)
                 else:
-                    clean_up_date_range()
-                    from_date_object["year"] = _number
-            else:
-                if from_date_object["month"] == 0:
-                    from_date_object["month"] = _number
-                elif from_date_object["day"] == 0:
-                    from_date_object["day"] = _number
-                elif to_date_object["month"] == 0:
-                    to_date_object["month"] = _number
-                elif to_date_object["day"] == 0:
-                    to_date_object["day"] = _number
-                else:
-                    clean_up_date_range()
-                    from_date_object["month"] = _number
+                    temp_date["y"] = max(temp_date["y"], temp["y"])
+                    temp_date["m"] = max(temp_date["m"], temp["m"])
+                    temp_date["d"] = max(temp_date["d"], temp["d"])
+                    if temp_date["y"] > 0 and temp_date["m"] > 0 and temp_date["d"] > 0:
+                        dates.append(temp_date)
+                        temp_date = DateObject(y=0, m=0, d=0)
+            context = ""
 
-        add_date_range()
+        elif t == SYMB:
+            context += c
 
-    def from_relative_words(_number: int, _word: str) -> bool:
-        used_number = False
+    if temp_date["y"] > 0 or temp_date["m"] > 0 or temp_date["d"] > 0:
+        dates.append(temp_date)
 
-        if _word == KW_LAST_YEAR or _word == KW_LAST_YEAR2:
-            if from_date_object["year"] == 0:
-                from_date_object["year"] = datetime.now(tz=timezone.utc).year - 1
-            elif to_date_object["year"] == 0:
-                to_date_object["year"] = datetime.now(tz=timezone.utc).year - 1
-            else:
-                clean_up_date_range()
-                from_date_object["year"] = datetime.now(tz=timezone.utc).year - 1
+    response["found_dates"] = dates
 
-        elif _word == KW_LAST_MONTH or _word == KW_LAST_MONTH2:
-            original_date = datetime.now(tz=timezone.utc)
-            relative_date = original_date - relativedelta(months=1)
-            if from_date_object["year"] == 0:
-                from_date_object.update({
-                    "year": relative_date.year,
-                    "month": relative_date.month
-                })
-            elif to_date_object["year"] == 0:
-                to_date_object.update({
-                    "year": relative_date.year,
-                    "month": relative_date.month
-                })
-            else:
-                clean_up_date_range()
-                from_date_object.update({
-                    "year": relative_date.year,
-                    "month": relative_date.month
-                })
-
-        elif _word == KW_LAST_LAST_YEAR:
-            if from_date_object["year"] == 0:
-                from_date_object["year"] = datetime.now(tz=timezone.utc).year - 2
-            elif to_date_object["year"] == 0:
-                to_date_object["year"] = datetime.now(tz=timezone.utc).year - 2
-            else:
-                clean_up_date_range()
-                from_date_object["year"] = datetime.now(tz=timezone.utc).year - 2
-
-        elif _word == KW_QUARTER:
-            used_number = True
-
-            if not (
-                from_date_object["month"] == 0
-                and to_date_object["month"] == 0
-            ):
-                clean_up_date_range()
-
-            if _number == 1:
-                from_date_object.update({
-                    "month": 1,
-                    "day": 1
-                })
-                to_date_object.update({
-                    "year": from_date_object["year"],
-                    "month": 3,
-                    "day": 31
-                })
-            elif _number == 2:
-                from_date_object.update({
-                    "month": 4,
-                    "day": 1
-                })
-                to_date_object.update({
-                    "year": from_date_object["year"],
-                    "month": 6,
-                    "day": 30
-                })
-            elif _number == 3:
-                from_date_object.update({
-                    "month": 7,
-                    "day": 1
-                })
-                to_date_object.update({
-                    "year": from_date_object["year"],
-                    "month": 9,
-                    "day": 30
-                })
-            elif _number == 4:
-                from_date_object.update({
-                    "month": 10,
-                    "day": 1
-                })
-                to_date_object.update({
-                    "year": from_date_object["year"],
-                    "month": 12,
-                    "day": 31
-                })
-
-        elif _word == KW_LAST_QUARTER:
-            if not (
-                from_date_object["month"] == 0
-                and to_date_object["month"] == 0
-            ):
-                clean_up_date_range()
-
-            original_date = datetime.now(tz=timezone.utc)
-            relative_date = original_date - relativedelta(months=3)
-            quarter = (relative_date.month - 1) // 3 + 1
-            if quarter == 1:
-                from_date_object.update({
-                    "year": relative_date.year,
-                    "month": 1,
-                    "day": 1
-                })
-                to_date_object.update({
-                    "year": relative_date.year,
-                    "month": 3,
-                    "day": 31
-                })
-            elif quarter == 2:
-                from_date_object.update({
-                    "year": relative_date.year,
-                    "month": 4,
-                    "day": 1
-                })
-                to_date_object.update({
-                    "year": relative_date.year,
-                    "month": 6,
-                    "day": 30
-                })
-            elif quarter == 3:
-                from_date_object.update({
-                    "year": relative_date.year,
-                    "month": 7,
-                    "day": 1
-                })
-                to_date_object.update({
-                    "year": relative_date.year,
-                    "month": 9,
-                    "day": 30
-                })
-            elif quarter == 4:
-                from_date_object.update({
-                    "year": relative_date.year,
-                    "month": 10,
-                    "day": 1
-                })
-                to_date_object.update({
-                    "year": relative_date.year,
-                    "month": 12,
-                    "day": 31
-                })
-
-        elif _word == KW_MONTHS:
-            used_number = True
-
-            if from_date_object["year"] == 0:
-                if from_date_object["month"] == 0:
-                    today_date = datetime.now(tz=timezone.utc)
-                    relative_date = today_date - relativedelta(months=_number)
-                    from_date_object.update({
-                        "year": relative_date.year,
-                        "month": relative_date.month,
-                        "day": relative_date.day
-                    })
-                    to_date_object.update({
-                        "year": today_date.year,
-                        "month": today_date.month,
-                        "day": today_date.day
-                    })
-                else:
-                    original_date = date(
-                        datetime.now(tz=timezone.utc).year,
-                        from_date_object["month"],
-                        from_date_object["day"] if from_date_object["day"] > 0 else 1
-                    )
-                    relative_date = original_date + relativedelta(months=_number)
-                    from_date_object.update({
-                        "year": original_date.year,
-                        "day": original_date.day
-                    })
-                    to_date_object.update({
-                        "year": relative_date.year,
-                        "month": relative_date.month,
-                        "day": relative_date.day
-                    })
-            elif to_date_object["year"] == 0:
-                original_date = date(
-                    from_date_object["year"],
-                    from_date_object["month"] if from_date_object["month"] > 0 else 1,
-                    from_date_object["day"] if from_date_object["day"] > 0 else 1
-                )
-                relative_date = original_date + relativedelta(months=_number)
-                from_date_object.update({
-                    "year": original_date.year,
-                    "month": original_date.month,
-                    "day": original_date.day
-                })
-                to_date_object.update({
-                    "year": relative_date.year,
-                    "month": relative_date.month,
-                    "day": relative_date.day
-                })
-            else:
-                clean_up_date_range()
-                if from_date_object["month"] == 0:
-                    today_date = datetime.now(tz=timezone.utc)
-                    relative_date = today_date - relativedelta(months=_number)
-                    from_date_object.update({
-                        "year": relative_date.year,
-                        "month": relative_date.month,
-                        "day": relative_date.day
-                    })
-                    to_date_object.update({
-                        "year": today_date.year,
-                        "month": today_date.month,
-                        "day": today_date.day
-                    })
-                else:
-                    original_date = date(
-                        datetime.now(tz=timezone.utc).year,
-                        from_date_object["month"],
-                        from_date_object["day"] if from_date_object["day"] > 0 else 1
-                    )
-                    relative_date = original_date + relativedelta(months=_number)
-                    from_date_object.update({
-                        "year": original_date.year,
-                        "day": original_date.day
-                    })
-                    to_date_object.update({
-                        "year": relative_date.year,
-                        "month": relative_date.month,
-                        "day": relative_date.day
-                    })
-
-        elif _word == KW_FIRST_HALF:
-            if not (
-                from_date_object["month"] == 0
-                and to_date_object["month"] == 0
-            ):
-                clean_up_date_range()
-
-            from_date_object.update({
-                "month": 1,
-                "day": 1
-            })
-            to_date_object.update({
-                "year": from_date_object["year"],
-                "month": 6,
-                "day": 30
-            })
-
-        elif _word == KW_LAST_HALF:
-            if not (
-                from_date_object["month"] == 0
-                and to_date_object["month"] == 0
-            ):
-                clean_up_date_range()
-
-            from_date_object.update({
-                "month": 7,
-                "day": 1
-            })
-            to_date_object.update({
-                "year": from_date_object["year"],
-                "month": 12,
-                "day": 31
-            })
-
-        elif _word == KW_YEARS or _word == KW_YEARS2:
-            used_number = True
-
-            if from_date_object["year"] == 0:
-                original_date = date(
-                    datetime.now(tz=timezone.utc).year,
-                    from_date_object["month"] if from_date_object["month"] > 0 else 1,
-                    from_date_object["day"] if from_date_object["day"] > 0 else 1
-                )
-                relative_date = original_date - relativedelta(years=_number)
-                from_date_object.update({
-                    "year": relative_date.year,
-                    "month": relative_date.month,
-                    "day": relative_date.day
-                })
-                to_date_object.update({
-                    "year": original_date.year,
-                    "month": original_date.month,
-                    "day": original_date.day
-                })
-            elif to_date_object["year"] == 0:
-                original_date = date(
-                    from_date_object["year"],
-                    from_date_object["month"] if from_date_object["month"] > 0 else 1,
-                    from_date_object["day"] if from_date_object["day"] > 0 else 1
-                )
-                relative_date = original_date + relativedelta(years=_number)
-                from_date_object.update({
-                    "month": original_date.month,
-                    "day": original_date.day
-                })
-                to_date_object.update({
-                    "year": relative_date.year,
-                    "month": relative_date.month,
-                    "day": relative_date.day
-                })
-            else:
-                clean_up_date_range()
-                original_date = date(
-                    datetime.now(tz=timezone.utc).year,
-                    from_date_object["month"] if from_date_object["month"] > 0 else 1,
-                    from_date_object["day"] if from_date_object["day"] > 0 else 1
-                )
-                relative_date = original_date - relativedelta(years=_number)
-                from_date_object.update({
-                    "year": relative_date.year,
-                    "month": relative_date.month,
-                    "day": relative_date.day
-                })
-                to_date_object.update({
-                    "year": original_date.year,
-                    "month": original_date.month,
-                    "day": original_date.day
-                })
-
-        elif _word == KW_THIS_YEAR or _word == KW_THIS_YEAR2:
-            if from_date_object["year"] == 0:
-                from_date_object["year"] = datetime.now(tz=timezone.utc).year
-            elif to_date_object["year"] == 0:
-                to_date_object["year"] = datetime.now(tz=timezone.utc).year
-            else:
-                clean_up_date_range()
-                from_date_object["year"] = datetime.now(tz=timezone.utc).year
-
-        elif _word == KW_THIS_MONTH or _word == KW_THIS_MONTH2 or _word == KW_THIS_MONTH3:
-            if from_date_object["month"] == 0:
-                from_date_object["month"] = datetime.now(tz=timezone.utc).month
-            elif to_date_object["month"] == 0:
-                to_date_object["month"] = datetime.now(tz=timezone.utc).month
-            else:
-                clean_up_date_range()
-                from_date_object["month"] = datetime.now(tz=timezone.utc).month
-
-        elif _word == KW_PRESENT or _word == KW_TODAY or _word == KW_TODAY2 or _word == KW_TODAY3:
-            original_date = datetime.now(tz=timezone.utc)
-            if from_date_object["year"] == 0:
-                from_date_object.update({
-                    "year": original_date.year,
-                    "month": original_date.month,
-                    "day": original_date.day
-                })
-            elif to_date_object["year"] == 0:
-                to_date_object.update({
-                    "year": original_date.year,
-                    "month": original_date.month,
-                    "day": original_date.day
-                })
-            else:
-                clean_up_date_range()
-                from_date_object.update({
-                    "year": original_date.year,
-                    "month": original_date.month,
-                    "day": original_date.day
-                })
-
-        add_date_range()
-
-        return used_number
-
-    used_tokens = []
-
-    number = 0
-    str_number = ""
-    for j, token in enumerate(new_string_list):
-        original_token = old_string_list[j]
-        original_token = original_token if original_token != "" else token
-
-        if bool(re.match(RE_IS_DIGIT, token)):
-            number = int(token)
-            str_number = original_token
-        elif token in ABSOLUTE_WORDS:
-            word = ABSOLUTE_WORDS[ABSOLUTE_WORDS.index(token)]
-            if number != 0:
-                from_absolute_words(number, word)
-                used_tokens.extend([str_number, token])
-                number = 0
-        elif token in RELATIVE_WORDS:
-            word = RELATIVE_WORDS[RELATIVE_WORDS.index(token)]
-            if from_relative_words(number, word):
-                used_tokens.append(str_number)
-            used_tokens.append(token)
-
-    # 5. Clean-up latest date_range
-
-    clean_up_date_range()
-
-    if len(date_objects) == 0:
-        used_tokens.clear()
-
-    return ParseResult(
-        date_ranges=date_objects,
-        used_tokens=used_tokens
-    )
+    return response
