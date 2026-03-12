@@ -18,3 +18,7 @@ def pretty_print(example: str):
 # pretty_print("지난 분기 매출")
 # pretty_print("이번 연도 매출")
 # pretty_print("이 회사의 이번 달 매출")
+# pretty_print("2024년 상반기 매출 보고")
+# pretty_print("작년 상반기 매출 보고")
+# pretty_print("최근 3개월치 매출")
+# pretty_print("2025년 1월부터 12개월 매출")

@@ -1,3 +1,5 @@
+from dateutil.relativedelta import relativedelta
+
 from .keywords import NUMB_WORDS, ABS_WORDS, REL_WORDS
 from .stopwords import STOPWORDS
 from .symbols import ALL_SYMBOLS
@@ -8,6 +10,7 @@ from .abs_closures import mapping as abs_mapping
 from .misc_closures import mapping as misc_mapping
 from .rel_closures import mapping as rel_mapping
 import re
+from datetime import datetime, timezone, date
 
 
 def remove_stopwords(text: str) -> str:
@@ -68,6 +71,10 @@ def wrap_terms(text: str) -> str:
     for i, c in enumerate(tokens):
         if skip_count > 0:
             skip_count -= 1
+            continue
+
+        if c == " ":
+            parsed += c
             continue
 
         chars = []
@@ -189,7 +196,7 @@ def generate_tokens(tags: list, tokens: list) -> list:
 
     counter = 0
     for i, t in enumerate(tags):
-        if t is None or t == PAD:
+        if t is None:
             counter += 1
             continue
 
@@ -248,28 +255,7 @@ def normalize_chars(useful_tokens: list) -> list:
     return normal_tokens
 
 
-def parse(text: str) -> ParseResult:
-    response: ParseResult = {
-        "found_dates": [],
-        "used_tokens": [],
-        "cleaned": ""
-    }
-
-    text = " ".join(text.split())
-    text = remove_stopwords(text)
-
-    response["cleaned"] = text
-
-    text = parse_year(text)
-    text = wrap_terms(text)
-    tokens = list(text)
-    tags = tag_chars(text)
-    useful_tokens = generate_tokens(tags, tokens)
-
-    response["used_tokens"] = useful_tokens
-
-    normal_tokens = normalize_chars(useful_tokens)
-
+def find_dates(normal_tokens: list) -> list:
     dates = []
 
     context = ""
@@ -289,7 +275,7 @@ def parse(text: str) -> ParseResult:
             context += c
             if re.search(RE_HAS_DIGIT_AND_CHAR, context):
                 if idx + 1 < tokens_len:
-                    if normal_tokens[idx+1][1] != SYMB and normal_tokens[idx+1][1] != NW:
+                    if normal_tokens[idx + 1][1] != SYMB and normal_tokens[idx + 1][1] != NW:
                         dates.append(misc_mapping[SYMB](context))
                         context = ""
                 else:
@@ -298,7 +284,8 @@ def parse(text: str) -> ParseResult:
 
         elif t == AW:
             temp = abs_mapping[c](context, temp_date)
-            if (0 < temp_date["y"] != temp["y"] > 0) or (0 < temp_date["m"] != temp["m"] > 0) or (0 < temp_date["d"] != temp["d"] > 0):
+            if (0 < temp_date["y"] != temp["y"] > 0) or (0 < temp_date["m"] != temp["m"] > 0) or (
+                    0 < temp_date["d"] != temp["d"] > 0):
                 dates.append(temp_date)
                 temp_date = temp
             else:
@@ -353,6 +340,63 @@ def parse(text: str) -> ParseResult:
 
     if temp_date["y"] > 0 or temp_date["m"] > 0 or temp_date["d"] > 0:
         dates.append(temp_date)
+
+    return dates
+
+
+def create_full_dates(dates: list) -> list:
+    full_dates = []
+
+    for date_item in dates:
+        if date_item["y"] > 0 and date_item["m"] > 0 and date_item["d"] > 0:
+            full_dates.append(date_item)
+            continue
+
+        if date_item["y"] > 0 and date_item["m"] == 0 and date_item["d"] == 0:
+            full_dates.append(DateObject(y=date_item["y"], m=1, d=1))
+            full_dates.append(DateObject(y=date_item["y"], m=12, d=31))
+            continue
+
+        if date_item["m"] > 0 and date_item["d"] == 0:
+            year = date_item["y"] if date_item["y"] > 0 else datetime.now(tz=timezone.utc).year
+            relative_date = date(year, date_item["m"], 1)
+            full_dates.append(DateObject(y=relative_date.year, m=relative_date.month, d=relative_date.day))
+            relative_date = relative_date + relativedelta(months=1)
+            relative_date = relative_date.replace(day=1) - relativedelta(days=1)
+            full_dates.append(DateObject(y=relative_date.year, m=relative_date.month, d=relative_date.day))
+            continue
+
+        if date_item["y"] == 0 and date_item["m"] == 0 and date_item["d"] > 0:
+            today = datetime.now(tz=timezone.utc)
+            full_dates.append(DateObject(y=today.year, m=today.month, d=date_item["d"]))
+            continue
+
+    return full_dates
+
+
+def parse(text: str) -> ParseResult:
+    response: ParseResult = {
+        "found_dates": [],
+        "used_tokens": [],
+        "cleaned": ""
+    }
+
+    text = " ".join(text.split())
+    text = remove_stopwords(text)
+
+    response["cleaned"] = text
+
+    text = parse_year(text)
+    text = wrap_terms(text)
+    tokens = list(text)
+    tags = tag_chars(text)
+    useful_tokens = generate_tokens(tags, tokens)
+
+    response["used_tokens"] = useful_tokens
+
+    normal_tokens = normalize_chars(useful_tokens)
+    dates = find_dates(normal_tokens)
+    dates = create_full_dates(dates)
 
     response["found_dates"] = dates
 

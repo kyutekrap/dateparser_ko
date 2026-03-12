@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 
 def last_half(context: str, temp_date: DateObject) -> List[DateObject]:
-    year = max(datetime.now(tz=timezone.utc).year, temp_date["y"])
+    year = temp_date["y"] if temp_date["y"] > 0 else datetime.now(tz=timezone.utc)
     try:
         int_context = int(context)
         if int_context > 1000:
