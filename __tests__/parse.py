@@ -22,3 +22,6 @@ def pretty_print(example: str):
 # pretty_print("작년 상반기 매출 보고")
 # pretty_print("최근 3개월치 매출")
 # pretty_print("2025년 1월부터 12개월 매출")
+# pretty_print("3개월 전 매출")
+# pretty_print("2012년부터 3개년 매출")
+# pretty_print("2024년 기준 3년 전 매출")

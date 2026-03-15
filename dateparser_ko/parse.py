@@ -63,22 +63,49 @@ def parse_year(text: str) -> str:
     return parsed
 
 
-def wrap_terms(text: str) -> str:
+def wrap_terms(text: str, terms_size: int = 4) -> str:
     parsed = ""
 
+    terms = [kw for kw in REL_WORDS if len(kw) == terms_size]
+
     tokens = list(text)
+    tokens_len = len(tokens)
     skip_count = 0
     for i, c in enumerate(tokens):
         if skip_count > 0:
             skip_count -= 1
             continue
 
+        if i + 12 < tokens_len:
+            if "".join(tokens[i:i + 6]) == f"<{TERM}>":
+                parsed += f"<{TERM}>"
+                start_pos = i + 6
+                end_pos = i + 6 + 7
+                while True:
+                    if end_pos < tokens_len:
+                        if "".join(tokens[start_pos:end_pos]) == f"</{TERM}>":
+                            parsed += f"</{TERM}>"
+                            skip_count = end_pos - i - 1
+                            break
+
+                        else:
+                            parsed += tokens[start_pos]
+
+                    else:
+                        break
+
+                    start_pos += 1
+                    end_pos += 1
+
+                if skip_count > 0:
+                    continue
+
         if c == " ":
             parsed += c
             continue
 
         chars = []
-        for keyword in REL_WORDS:
+        for keyword in terms:
             for j, ch in enumerate(tokens[i:]):
                 if "".join(chars).replace(" ", "") == keyword and ch == " ":
                     break
@@ -101,7 +128,10 @@ def wrap_terms(text: str) -> str:
 
         parsed += c
 
-    return parsed
+    if terms_size == 2:
+        return parsed
+    else:
+        return wrap_terms(parsed, terms_size - 1)
 
 
 def tag_chars(text: str) -> list:
